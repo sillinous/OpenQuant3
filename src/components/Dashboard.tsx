@@ -10,6 +10,7 @@ export default function Dashboard() {
   const [selectedAsset, setSelectedAsset] = useState<string>('BTC/USD');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [hoveredData, setHoveredData] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState<'OPEN' | 'CLOSED'>('OPEN');
 
   useEffect(() => {
     simulation.start();
@@ -25,7 +26,7 @@ export default function Dashboard() {
   if (!state) return <div className="flex items-center justify-center h-screen bg-zinc-950 text-zinc-400">Initializing Bot...</div>;
 
   const asset = state.assets[selectedAsset];
-  const openTrades = state.trades.filter(t => t.status === 'OPEN');
+  const displayedTrades = state.trades.filter(t => t.status === activeTab);
   const recentSignals = state.signals.slice(0, 5);
 
   const formatPrice = (price: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(price);
@@ -307,11 +308,24 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Active Trades */}
+      {/* Trades Section */}
       <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-2xl p-5 mt-6">
-        <h2 className="text-sm font-medium text-zinc-400 mb-4 flex items-center gap-2">
-          <TrendingUp className="w-4 h-4" /> Active Positions
-        </h2>
+        <div className="flex items-center gap-6 border-b border-zinc-800/50 mb-4 pb-2">
+          <button
+            onClick={() => setActiveTab('OPEN')}
+            className={`text-sm font-medium flex items-center gap-2 pb-2 -mb-[9px] transition-colors ${activeTab === 'OPEN' ? 'text-zinc-100 border-b-2 border-emerald-400' : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+          >
+            <TrendingUp className="w-4 h-4" /> Active Positions
+          </button>
+          <button
+            onClick={() => setActiveTab('CLOSED')}
+            className={`text-sm font-medium flex items-center gap-2 pb-2 -mb-[9px] transition-colors ${activeTab === 'CLOSED' ? 'text-zinc-100 border-b-2 border-emerald-400' : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+          >
+            <Clock className="w-4 h-4" /> Closed Trades
+          </button>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
             <thead className="text-xs text-zinc-500 uppercase bg-zinc-900/50 border-b border-zinc-800">
@@ -320,26 +334,26 @@ export default function Dashboard() {
                 <th className="px-4 py-3 font-medium">Type</th>
                 <th className="px-4 py-3 font-medium">Size</th>
                 <th className="px-4 py-3 font-medium">Entry Price</th>
-                <th className="px-4 py-3 font-medium">Current Price</th>
+                <th className="px-4 py-3 font-medium">{activeTab === 'OPEN' ? 'Current Price' : 'Exit Price'}</th>
                 <th className="px-4 py-3 font-medium">Entry Time</th>
                 <th className="px-4 py-3 font-medium">Duration</th>
-                <th className="px-4 py-3 font-medium text-right rounded-tr-lg">Unrealized PnL</th>
+                <th className="px-4 py-3 font-medium text-right rounded-tr-lg">{activeTab === 'OPEN' ? 'Unrealized' : 'Realized'} PnL</th>
               </tr>
             </thead>
             <tbody className="relative">
               <AnimatePresence initial={false}>
-                {openTrades.length === 0 ? (
+                {displayedTrades.length === 0 ? (
                   <motion.tr 
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                   >
                     <td colSpan={8} className="px-4 py-8 text-center text-zinc-500 text-xs">
-                      No active positions
+                      {activeTab === 'OPEN' ? 'No active positions' : 'No closed trades'}
                     </td>
                   </motion.tr>
                 ) : (
-                  openTrades.map((trade) => {
-                    const currentPrice = state.assets[trade.symbol].currentPrice;
+                    displayedTrades.map((trade) => {
+                      const currentPrice = trade.status === 'OPEN' ? state.assets[trade.symbol].currentPrice : trade.exitPrice!;
                     const isProfit = trade.pnl && trade.pnl > 0;
                     return (
                       <motion.tr 
@@ -384,7 +398,7 @@ export default function Dashboard() {
           </table>
         </div>
       </div>
-      {isSettingsOpen && <SettingsPanel onClose={() => setIsSettingsOpen(false)} />}
+      {isSettingsOpen && <SettingsPanel config={state.config} onSave={(newConfig) => simulation.updateConfig(newConfig)} onClose={() => setIsSettingsOpen(false)} />}
     </div>
   );
 }

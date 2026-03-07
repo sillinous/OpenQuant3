@@ -49,15 +49,35 @@ export interface Signal {
   timestamp: number;
 }
 
+export interface SimulationConfig {
+  breakoutThreshold: number;
+  lookbackPeriod: number;
+  takeProfit: number;
+  stopLoss: number;
+  autoTrade: boolean;
+}
+
 class TradingSimulation {
   private assets: Record<string, Asset> = {};
   private trades: Trade[] = [];
   private signals: Signal[] = [];
   private listeners: ((state: SimulationState) => void)[] = [];
   private intervalId: any = null;
+  private config: SimulationConfig = {
+    breakoutThreshold: 0.1,
+    lookbackPeriod: 20,
+    takeProfit: 2.0,
+    stopLoss: 1.0,
+    autoTrade: true
+  };
 
   constructor() {
     this.initializeAssets();
+  }
+
+  public updateConfig(newConfig: Partial<SimulationConfig>) {
+    this.config = { ...this.config, ...newConfig };
+    this.notifyListeners();
   }
 
   private generateOrderBook(currentPrice: number, volatility: number): OrderBook {
@@ -147,8 +167,8 @@ class TradingSimulation {
       }
 
       // Calculate simple support/resistance based on recent history
-      const recentHighs = history.slice(-20).map(p => p.high);
-      const recentLows = history.slice(-20).map(p => p.low);
+      const recentHighs = history.slice(-this.config.lookbackPeriod).map(p => p.high);
+      const recentLows = history.slice(-this.config.lookbackPeriod).map(p => p.low);
       const resistance = Math.max(...recentHighs);
       const support = Math.min(...recentLows);
 
@@ -203,6 +223,12 @@ class TradingSimulation {
           volume: Math.random() * 100,
         });
         if (history.length > 100) history.shift();
+
+        // Recalculate support and resistance on new candle based on lookback period
+        const recentHighs = history.slice(-this.config.lookbackPeriod).map(p => p.high);
+        const recentLows = history.slice(-this.config.lookbackPeriod).map(p => p.low);
+        asset.resistance = Math.max(...recentHighs);
+        asset.support = Math.min(...recentLows);
       } else {
         // Update current candle
         history[history.length - 1] = {
@@ -218,11 +244,12 @@ class TradingSimulation {
       let newResistance = asset.resistance;
 
       // Check for breakouts
-      if (newPrice > asset.resistance * 1.001) {
+      const threshold = this.config.breakoutThreshold / 100;
+      if (newPrice > asset.resistance * (1 + threshold)) {
         this.emitSignal(asset.symbol, 'BREAKOUT_UP', newPrice);
         newResistance = newPrice * 1.02; // Adjust resistance up
         newSupport = newPrice * 0.98;
-      } else if (newPrice < asset.support * 0.999) {
+      } else if (newPrice < asset.support * (1 - threshold)) {
         this.emitSignal(asset.symbol, 'BREAKOUT_DOWN', newPrice);
         newSupport = newPrice * 0.98; // Adjust support down
         newResistance = newPrice * 1.02;
@@ -256,7 +283,7 @@ class TradingSimulation {
       const updatedTrade = { ...trade, pnl, pnlUsd };
 
       // Simple take profit / stop loss
-      if (pnl > 2 || pnl < -1) {
+      if (pnl > this.config.takeProfit || pnl < -this.config.stopLoss) {
         updatedTrade.status = 'CLOSED';
         updatedTrade.exitPrice = currentPrice;
       }
@@ -280,7 +307,9 @@ class TradingSimulation {
     this.signals = [signal, ...this.signals].slice(0, 50);
 
     // Auto-trade on signal
-    this.executeTrade(symbol, type === 'BREAKOUT_UP' ? 'LONG' : 'SHORT', price);
+    if (this.config.autoTrade) {
+      this.executeTrade(symbol, type === 'BREAKOUT_UP' ? 'LONG' : 'SHORT', price);
+    }
   }
 
   private executeTrade(symbol: string, type: 'LONG' | 'SHORT', price: number) {
@@ -323,6 +352,7 @@ class TradingSimulation {
       trades: [...this.trades],
       signals: [...this.signals],
       totalPnlUsd,
+      config: { ...this.config },
     };
   }
 }
@@ -332,6 +362,7 @@ export interface SimulationState {
   trades: Trade[];
   signals: Signal[];
   totalPnlUsd: number;
+  config: SimulationConfig;
 }
 
 export const simulation = new TradingSimulation();
