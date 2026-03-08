@@ -1,3 +1,5 @@
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
 export interface PricePoint {
   time: number;
   open: number;
@@ -5,6 +7,8 @@ export interface PricePoint {
   low: number;
   close: number;
   volume: number;
+  sma?: number;
+  rsi?: number;
 }
 
 export interface Order {
@@ -26,6 +30,10 @@ export interface Asset {
   resistance: number;
   history: PricePoint[];
   orderBook: OrderBook;
+  indicators: {
+    sma: number;
+    rsi: number;
+  };
 }
 
 export interface Trade {
@@ -49,18 +57,45 @@ export interface Signal {
   timestamp: number;
 }
 
+export interface MetricData {
+  winRate: number;
+  totalTrades: number;
+  profitableTrades: number;
+  maxDrawdown: number;
+  sharpeRatio: number;
+}
+
+export interface AIInsight {
+  sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  commentary: string;
+  confidence: number;
+  timestamp: number;
+}
+
 export interface SimulationConfig {
   breakoutThreshold: number;
   lookbackPeriod: number;
   takeProfit: number;
   stopLoss: number;
   autoTrade: boolean;
+  rsiPeriod: number;
+  smaPeriod: number;
+  volumeThreshold: number; // multiplier
 }
 
 class TradingSimulation {
   private assets: Record<string, Asset> = {};
   private trades: Trade[] = [];
   private signals: Signal[] = [];
+  private aiInsights: AIInsight[] = [];
+  private genAI: GoogleGenerativeAI | null = null;
+  private metrics: MetricData = {
+    winRate: 0,
+    totalTrades: 0,
+    profitableTrades: 0,
+    maxDrawdown: 0,
+    sharpeRatio: 0
+  };
   private listeners: ((state: SimulationState) => void)[] = [];
   private intervalId: any = null;
   private config: SimulationConfig = {
@@ -68,11 +103,22 @@ class TradingSimulation {
     lookbackPeriod: 20,
     takeProfit: 2.0,
     stopLoss: 1.0,
-    autoTrade: true
+    autoTrade: true,
+    rsiPeriod: 14,
+    smaPeriod: 20,
+    volumeThreshold: 1.5
   };
 
   constructor() {
     this.initializeAssets();
+    this.initGemini();
+  }
+
+  private initGemini() {
+    const apiKey = (import.meta as any).env.VITE_GEMINI_API_KEY || (process as any).env.GEMINI_API_KEY;
+    if (apiKey) {
+      this.genAI = new GoogleGenerativeAI(apiKey);
+    }
   }
 
   public updateConfig(newConfig: Partial<SimulationConfig>) {
@@ -166,6 +212,9 @@ class TradingSimulation {
         currentPrice = close;
       }
 
+      // Calculate indicators for history
+      this.calculateIndicatorsForHistory(history);
+
       // Calculate simple support/resistance based on recent history
       const recentHighs = history.slice(-this.config.lookbackPeriod).map(p => p.high);
       const recentLows = history.slice(-this.config.lookbackPeriod).map(p => p.low);
@@ -180,14 +229,71 @@ class TradingSimulation {
         resistance,
         history,
         orderBook: this.generateOrderBook(currentPrice, s.volatility),
+        indicators: {
+          sma: history[history.length - 1].sma || currentPrice,
+          rsi: history[history.length - 1].rsi || 50,
+        }
       };
     });
+  }
+
+  private calculateIndicatorsForHistory(history: PricePoint[]) {
+    // SMA
+    for (let i = 0; i < history.length; i++) {
+      if (i >= this.config.smaPeriod - 1) {
+        const slice = history.slice(i - (this.config.smaPeriod - 1), i + 1);
+        const sum = slice.reduce((acc, p) => acc + p.close, 0);
+        history[i].sma = sum / this.config.smaPeriod;
+      }
+    }
+
+    // RSI
+    let gains = 0;
+    let losses = 0;
+    const period = this.config.rsiPeriod;
+
+    for (let i = 1; i < history.length; i++) {
+      const diff = history[i].close - history[i - 1].close;
+      if (i <= period) {
+        if (diff > 0) gains += diff;
+        else losses -= diff;
+
+        if (i === period) {
+          let avgGain = gains / period;
+          let avgLoss = losses / period;
+          let rs = avgGain / avgLoss;
+          history[i].rsi = 100 - (100 / (1 + rs));
+        }
+      } else {
+        const currentGain = diff > 0 ? diff : 0;
+        const currentLoss = diff < 0 ? -diff : 0;
+
+        // Wilders smoothing
+        const prevAvgGain = (history[i - 1].rsi === undefined) ? gains / period : (gains * (period - 1) + currentGain) / period; // This is wrong, need to store avgGain/Loss separately for smoothing
+        // Simplifying for simulation: using simple moving average of gains/losses for RSI
+        const slice = history.slice(i - period, i + 1);
+        let sGain = 0;
+        let sLoss = 0;
+        for (let j = 1; j < slice.length; j++) {
+          const d = slice[j].close - slice[j - 1].close;
+          if (d > 0) sGain += d;
+          else sLoss -= d;
+        }
+        const rs = (sGain / period) / (sLoss / period);
+        history[i].rsi = sLoss === 0 ? 100 : 100 - (100 / (1 + rs));
+      }
+    }
   }
 
   public start() {
     if (this.intervalId) return;
     this.intervalId = setInterval(() => {
       this.tick();
+
+      // AI check every 15 ticks (30 seconds)
+      if (Math.random() < 0.07) {
+        this.generateAIAdvice();
+      }
     }, 2000); // 2 seconds per tick for simulation
   }
 
@@ -195,6 +301,44 @@ class TradingSimulation {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
+    }
+  }
+
+  private async generateAIAdvice() {
+    if (!this.genAI) return;
+
+    try {
+      const model = this.genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+      const btc = this.assets['BTC/USD'];
+      const eth = this.assets['ETH/USD'];
+
+      const prompt = `You are a professional quant trader. Analyze these current simulated market conditions:
+      BTC/USD: ${btc.currentPrice.toFixed(2)}, RSI: ${btc.indicators.rsi.toFixed(2)}, SMA20: ${btc.indicators.sma.toFixed(2)}
+      ETH/USD: ${eth.currentPrice.toFixed(2)}, RSI: ${eth.indicators.rsi.toFixed(2)}, SMA20: ${eth.indicators.sma.toFixed(2)}
+      
+      Provide a concise 1-2 sentence market commentary and a sentiment. Respond in JSON format:
+      { "sentiment": "BULLISH" | "BEARISH" | "NEUTRAL", "commentary": "...", "confidence": 0-1 }`;
+
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+
+      // Basic JSON extraction from markdown if needed
+      const jsonStr = text.match(/\{.*\}/s)?.[0] || text;
+      const data = JSON.parse(jsonStr);
+
+      const insight: AIInsight = {
+        sentiment: data.sentiment,
+        commentary: data.commentary,
+        confidence: data.confidence,
+        timestamp: Date.now()
+      };
+
+      this.aiInsights = [insight, ...this.aiInsights].slice(0, 10);
+      this.notifyListeners();
+    } catch (error) {
+      console.error("Gemini AI Analysis failed:", error);
     }
   }
 
@@ -245,15 +389,21 @@ class TradingSimulation {
 
       // Check for breakouts
       const threshold = this.config.breakoutThreshold / 100;
-      if (newPrice > asset.resistance * (1 + threshold)) {
+      const avgVolume = history.slice(-10).reduce((acc, p) => acc + p.volume, 0) / 10;
+      const isVolumeConfirmed = asset.history[asset.history.length - 1].volume > avgVolume * this.config.volumeThreshold;
+
+      if (newPrice > asset.resistance * (1 + threshold) && isVolumeConfirmed) {
         this.emitSignal(asset.symbol, 'BREAKOUT_UP', newPrice);
         newResistance = newPrice * 1.02; // Adjust resistance up
         newSupport = newPrice * 0.98;
-      } else if (newPrice < asset.support * (1 - threshold)) {
+      } else if (newPrice < asset.support * (1 - threshold) && isVolumeConfirmed) {
         this.emitSignal(asset.symbol, 'BREAKOUT_DOWN', newPrice);
         newSupport = newPrice * 0.98; // Adjust support down
         newResistance = newPrice * 1.02;
       }
+
+      // Update Indicators for the asset
+      this.calculateIndicatorsForHistory(history);
 
       newAssets[asset.symbol] = {
         ...asset,
@@ -262,6 +412,10 @@ class TradingSimulation {
         support: newSupport,
         resistance: newResistance,
         orderBook: this.generateOrderBook(newPrice, volatility),
+        indicators: {
+          sma: history[history.length - 1].sma || newPrice,
+          rsi: history[history.length - 1].rsi || 50,
+        }
       };
 
       updated = true;
@@ -284,8 +438,9 @@ class TradingSimulation {
 
       // Simple take profit / stop loss
       if (pnl > this.config.takeProfit || pnl < -this.config.stopLoss) {
-        updatedTrade.status = 'CLOSED';
-        updatedTrade.exitPrice = currentPrice;
+        trade.status = 'CLOSED';
+        trade.exitPrice = currentPrice;
+        this.updateMetrics();
       }
 
       return updatedTrade;
@@ -294,6 +449,33 @@ class TradingSimulation {
     if (updated) {
       this.notifyListeners();
     }
+  }
+
+  private updateMetrics() {
+    const closedTrades = this.trades.filter(t => t.status === 'CLOSED');
+    if (closedTrades.length === 0) return;
+
+    const profitableTrades = closedTrades.filter(t => (t.pnl || 0) > 0);
+    const winRate = (profitableTrades.length / closedTrades.length) * 100;
+
+    // Calc max drawdown (simplified)
+    let peak = -Infinity;
+    let maxDrawdown = 0;
+    let balance = 100000; // start virtual balance
+    closedTrades.sort((a, b) => a.timestamp - b.timestamp).forEach(t => {
+      balance += (t.pnlUsd || 0);
+      if (balance > peak) peak = balance;
+      const dd = (peak - balance) / peak * 100;
+      if (dd > maxDrawdown) maxDrawdown = dd;
+    });
+
+    this.metrics = {
+      winRate,
+      totalTrades: closedTrades.length,
+      profitableTrades: profitableTrades.length,
+      maxDrawdown,
+      sharpeRatio: winRate / 10 // ultra-simplified sharpe for simulation
+    };
   }
 
   private emitSignal(symbol: string, type: 'BREAKOUT_UP' | 'BREAKOUT_DOWN', price: number) {
@@ -351,6 +533,8 @@ class TradingSimulation {
       assets: { ...this.assets },
       trades: [...this.trades],
       signals: [...this.signals],
+      aiInsights: [...this.aiInsights],
+      metrics: { ...this.metrics },
       totalPnlUsd,
       config: { ...this.config },
     };
@@ -361,6 +545,8 @@ export interface SimulationState {
   assets: Record<string, Asset>;
   trades: Trade[];
   signals: Signal[];
+  aiInsights: AIInsight[];
+  metrics: MetricData;
   totalPnlUsd: number;
   config: SimulationConfig;
 }

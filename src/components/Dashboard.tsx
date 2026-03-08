@@ -3,6 +3,7 @@ import { Activity, ArrowDownRight, ArrowUpRight, Clock, Settings, TrendingUp, Al
 import { simulation, SimulationState, Asset, Trade, Signal } from '../services/tradingSimulation';
 import { ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import SettingsPanel from './Settings';
+import AIAnalyst from './AIAnalyst';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function Dashboard() {
@@ -107,48 +108,7 @@ export default function Dashboard() {
               ))}
             </div>
           </div>
-
-          <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-2xl p-5">
-            <h2 className="text-sm font-medium text-zinc-400 mb-4 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4" /> Recent Signals
-            </h2>
-            <div className="space-y-3">
-              <AnimatePresence initial={false}>
-                {recentSignals.length === 0 ? (
-                  <motion.div 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="text-xs text-zinc-500 text-center py-4"
-                  >
-                    No recent signals
-                  </motion.div>
-                ) : (
-                  recentSignals.map((signal) => (
-                    <motion.div 
-                      key={signal.id} 
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.9 }}
-                      className="flex items-center justify-between p-2 rounded-lg bg-zinc-900 border border-zinc-800/50"
-                    >
-                      <div className="flex items-center gap-2">
-                        {signal.type === 'BREAKOUT_UP' ? (
-                          <ArrowUpRight className="w-4 h-4 text-emerald-400" />
-                        ) : (
-                          <ArrowDownRight className="w-4 h-4 text-rose-400" />
-                        )}
-                        <div>
-                          <div className="text-xs font-medium">{signal.symbol}</div>
-                          <div className="text-[10px] text-zinc-500">{formatTime(signal.timestamp)}</div>
-                        </div>
-                      </div>
-                      <div className="text-xs font-mono">{formatPrice(signal.price)}</div>
-                    </motion.div>
-                  ))
-                )}
-              </AnimatePresence>
-            </div>
-          </div>
+          <AIAnalyst insights={state.aiInsights} metrics={state.metrics} />
         </div>
 
         {/* Middle Column: Chart & Active Trades */}
@@ -250,8 +210,62 @@ export default function Dashboard() {
                     activeDot={{ r: 4, fill: '#3b82f6', stroke: '#fff', strokeWidth: 2 }}
                     isAnimationActive={false}
                   />
+                  <Line
+                    yAxisId="price"
+                    type="monotone"
+                    dataKey="sma"
+                    stroke="#10b981"
+                    strokeWidth={1}
+                    dot={false}
+                    opacity={0.4}
+                    isAnimationActive={false}
+                  />
                 </ComposedChart>
               </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* RSI Sub-chart Placeholder or Metric */}
+          <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest">Relative Strength Index (14)</h3>
+              <span className={`text-xs font-mono ${asset.indicators.rsi > 70 ? 'text-rose-400' : asset.indicators.rsi < 30 ? 'text-emerald-400' : 'text-zinc-400'}`}>
+                {asset.indicators.rsi.toFixed(2)}
+              </span>
+            </div>
+            <div className="h-2 bg-zinc-950 rounded-full overflow-hidden border border-zinc-800">
+              <div
+                className={`h-full transition-all duration-1000 ${asset.indicators.rsi > 70 ? 'bg-rose-500' : asset.indicators.rsi < 30 ? 'bg-emerald-500' : 'bg-indigo-500'
+                  }`}
+                style={{ width: `${asset.indicators.rsi}%` }}
+              />
+            </div>
+            <div className="flex justify-between mt-1 px-1">
+              <span className="text-[8px] text-zinc-600">OVERSOLD</span>
+              <span className="text-[8px] text-zinc-600">NEUTRAL</span>
+              <span className="text-[8px] text-zinc-600">OVERBOUGHT</span>
+            </div>
+          </div>
+
+          {/* System Terminal */}
+          <div className="bg-zinc-950 border border-zinc-800/50 rounded-2xl p-4 font-mono text-[10px] h-[150px] overflow-hidden flex flex-col">
+            <div className="flex items-center gap-2 mb-2 text-zinc-500 border-b border-zinc-800 pb-2">
+              <div className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span>TERMINAL • BOT_ENGINE_SHIELD</span>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-1 custom-scrollbar text-zinc-400">
+              {state.signals.slice(0, 10).map((s, i) => (
+                <div key={s.id} className="flex gap-2 leading-tight">
+                  <span className="text-zinc-600">[{new Date(s.timestamp).toLocaleTimeString()}]</span>
+                  <span className={s.type.includes('UP') ? 'text-emerald-500/80' : 'text-rose-500/80'}>
+                    SIGNAL::{s.type} :: {s.symbol} @ {formatPrice(s.price)}
+                  </span>
+                </div>
+              ))}
+              <div className="flex gap-2 leading-tight">
+                <span className="text-zinc-600">[{new Date().toLocaleTimeString()}]</span>
+                <span className="text-indigo-400/80 italic">ENGINE::HEARTBEAT_STABLE :: {Object.keys(state.assets).length} ASSETS_SYNCED</span>
+              </div>
             </div>
           </div>
         </div>
