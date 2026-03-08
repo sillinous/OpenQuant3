@@ -59,8 +59,11 @@ export default function AIAnalyst({ insights, metrics }: AIAnalystProps) {
             <h2 className="text-sm font-medium text-indigo-300 flex items-center gap-2">
               <Sparkles className="w-4 h-4" /> AI Analyst Insight
             </h2>
-            <div className="px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-[10px] font-medium text-indigo-400 animate-pulse">
-              LIVE
+            <div className={`px-2 py-0.5 rounded-full border text-[10px] font-medium animate-pulse ${latestInsight?.commentary.includes('[Local Engine]')
+                ? 'bg-zinc-500/10 border-zinc-500/20 text-zinc-400'
+                : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400'
+              }`}>
+              {latestInsight?.commentary.includes('[Local Engine]') ? 'LOCAL' : 'CLOUD'}
             </div>
           </div>
 

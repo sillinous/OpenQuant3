@@ -305,7 +305,10 @@ class TradingSimulation {
   }
 
   private async generateAIAdvice() {
-    if (!this.genAI) return;
+    if (!this.genAI) {
+      this.generateLocalAIAdvice();
+      return;
+    }
 
     try {
       const model = this.genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
@@ -338,8 +341,54 @@ class TradingSimulation {
       this.aiInsights = [insight, ...this.aiInsights].slice(0, 10);
       this.notifyListeners();
     } catch (error) {
-      console.error("Gemini AI Analysis failed:", error);
+      console.error("Gemini AI Analysis failed, falling back to local:", error);
+      this.generateLocalAIAdvice();
     }
+  }
+
+  private generateLocalAIAdvice() {
+    const btc = this.assets['BTC/USD'];
+    if (!btc) return;
+
+    const rsi = btc.indicators.rsi;
+    const price = btc.currentPrice;
+    const sma = btc.indicators.sma;
+
+    let sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+    let commentary = '';
+    let confidence = 0.5;
+
+    if (rsi > 70) {
+      sentiment = 'BEARISH';
+      commentary = `Market is currently overbought with RSI at ${rsi.toFixed(1)}. Expect potential resistance near local highs.`;
+      confidence = 0.7;
+    } else if (rsi < 30) {
+      sentiment = 'BULLISH';
+      commentary = `Oversold conditions detected (RSI ${rsi.toFixed(1)}). Potential for a mean reversion bounce from current levels.`;
+      confidence = 0.75;
+    } else if (price > sma * 1.02) {
+      sentiment = 'BULLISH';
+      commentary = `Price is trending strong above SMA20. Momentum remains positive for the major pairs.`;
+      confidence = 0.6;
+    } else if (price < sma * 0.98) {
+      sentiment = 'BEARISH';
+      commentary = `Bearish breakdown below SMA has triggered defensive posture. Support may be tested.`;
+      confidence = 0.65;
+    } else {
+      sentiment = 'NEUTRAL';
+      commentary = `Market is consolidating within standard ranges. Indicators suggest sideways price action in the short term.`;
+      confidence = 0.4;
+    }
+
+    const insight: AIInsight = {
+      sentiment,
+      commentary: `[Local Engine] ${commentary}`,
+      confidence,
+      timestamp: Date.now()
+    };
+
+    this.aiInsights = [insight, ...this.aiInsights].slice(0, 10);
+    this.notifyListeners();
   }
 
   private tick() {
